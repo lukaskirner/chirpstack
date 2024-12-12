@@ -165,6 +165,7 @@ pub struct Network {
     #[serde(with = "humantime_serde")]
     pub get_downlink_data_delay: Duration,
     pub mac_commands_disabled: bool,
+    pub device_time_req_force_network_time: bool,
     pub adr_plugins: Vec<String>,
     pub scheduler: Scheduler,
 }
@@ -180,6 +181,7 @@ impl Default for Network {
             deduplication_delay: Duration::from_millis(200),
             get_downlink_data_delay: Duration::from_millis(100),
             mac_commands_disabled: false,
+            device_time_req_force_network_time: false,
             adr_plugins: vec![],
             scheduler: Default::default(),
         }

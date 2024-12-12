@@ -1,9 +1,9 @@
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use tracing::{info, warn};
-
+use crate::config;
 use crate::gpstime::ToGpsTime;
 use crate::storage::device;
 use crate::uplink::{helpers, UplinkFrameSet};
@@ -17,7 +17,14 @@ pub fn handle(
         .first()
         .ok_or_else(|| anyhow!("Expected DeviceTimeReq"))?;
 
-    let rx_time: DateTime<Utc> = helpers::get_rx_timestamp(&uplink_frame_set.rx_info_set).into();
+    let conf = config::get();
+
+    let rx_time: DateTime<Utc> = if conf.network.device_time_req_force_network_time {
+        SystemTime::now().into()
+    } else {
+        helpers::get_rx_timestamp(&uplink_frame_set.rx_info_set).into()
+    };
+
     let gps_time = rx_time.to_gps_time();
 
     info!(dev_eui = %dev.dev_eui, rx_time = %rx_time, gps_time = %gps_time.num_seconds(), "DeviceTimeReq received");
@@ -46,8 +53,53 @@ pub mod test {
     #[test]
     fn test_handle() {
         let rx_time = Utc::now();
+        let ufs = build_uplink_frame_set(rx_time);
 
-        let ufs = UplinkFrameSet {
+        let gps_time = rx_time.to_gps_time();
+
+        let dev: device::Device = Default::default();
+        let block = lrwn::MACCommandSet::new(vec![lrwn::MACCommand::DeviceTimeReq]);
+
+        let resp = handle(&ufs, &dev, &block).unwrap();
+
+        assert_eq!(
+            Some(lrwn::MACCommandSet::new(vec![
+                lrwn::MACCommand::DeviceTimeAns(lrwn::DeviceTimeAnsPayload {
+                    time_since_gps_epoch: gps_time.to_std().unwrap(),
+                })
+            ])),
+            resp
+        );
+    }
+
+    #[test]
+    fn test_handle_enforce_ns_time() {
+        let rx_time = Utc::now();
+        let ufs = build_uplink_frame_set(rx_time);
+
+        let gps_time = rx_time.to_gps_time();
+
+        let dev: device::Device = Default::default();
+        let block = lrwn::MACCommandSet::new(vec![lrwn::MACCommand::DeviceTimeReq]);
+
+        let mut conf = (*config::get()).clone();
+        conf.network.device_time_req_force_network_time = true;
+        config::set(conf);
+
+        let resp = handle(&ufs, &dev, &block).unwrap();
+
+        assert_ne!(
+            Some(lrwn::MACCommandSet::new(vec![
+                lrwn::MACCommand::DeviceTimeAns(lrwn::DeviceTimeAnsPayload {
+                    time_since_gps_epoch: gps_time.to_std().unwrap(),
+                })
+            ])),
+            resp
+        );
+    }
+
+    fn build_uplink_frame_set(rx_time: DateTime<Utc>) -> UplinkFrameSet {
+        UplinkFrameSet {
             uplink_set_id: Uuid::new_v4(),
             dr: 0,
             ch: 0,
@@ -74,22 +126,6 @@ pub mod test {
             region_common_name: lrwn::region::CommonName::EU868,
             region_config_id: "eu868".into(),
             roaming_meta_data: None,
-        };
-
-        let gps_time = rx_time.to_gps_time();
-
-        let dev: device::Device = Default::default();
-        let block = lrwn::MACCommandSet::new(vec![lrwn::MACCommand::DeviceTimeReq]);
-
-        let resp = handle(&ufs, &dev, &block).unwrap();
-
-        assert_eq!(
-            Some(lrwn::MACCommandSet::new(vec![
-                lrwn::MACCommand::DeviceTimeAns(lrwn::DeviceTimeAnsPayload {
-                    time_since_gps_epoch: gps_time.to_std().unwrap(),
-                })
-            ])),
-            resp
-        );
+        }
     }
 }
